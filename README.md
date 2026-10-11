@@ -40,13 +40,15 @@ Then install, sample the height maps, and run:
 
 ```sh
 npm install
-npm run sample
-npm run sample -- --body mars
+npm run sample -- --body moon --cols 4096 --rows 2048
+npm run sample -- --body mars --cols 4096 --rows 2048
 npm run dev
 ```
 
-Pass `--cols` and `--rows` to change the grid resolution (default 1024x512), and
-`--color-cols` / `--color-rows` for the colour texture (default 2048x1024).
+`--cols` and `--rows` set the height grid resolution (default 1024x512; the site
+ships 4096x2048). The colour texture is written as a JPEG; set its size with
+`--color-cols` / `--color-rows` (default 2048x1024) and its quality with
+`--color-quality` (0-100, default 90).
 
 The site lives under the `/solar-heightmap` base path, matching the GitHub
 Pages repo name. The index links to `/solar-heightmap/lunar-heightmap/` and

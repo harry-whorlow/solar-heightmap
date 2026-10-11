@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { crc32, deflateSync } from "node:zlib";
+import { encode } from "jpeg-js";
 import { MARS_RADIUS_KM, MOON_RADIUS_KM, openHeightMap, sampleColorGrid } from "../src/scripts/sampling.ts";
 
 // Mars relief reaches ~21 km, which overflows int16 at half-metre precision.
@@ -20,34 +20,15 @@ const BODIES: Record<string, { input: string; colorInput?: string; radiusKm: num
   },
 };
 
-function encodePng(rgb: Uint8Array, width: number, height: number): Buffer {
-  const chunk = (type: string, data: Buffer) => {
-    const out = Buffer.alloc(data.length + 12);
-    out.writeUInt32BE(data.length, 0);
-    out.write(type, 4, "ascii");
-    data.copy(out, 8);
-    out.writeUInt32BE(crc32(out.subarray(4, 8 + data.length)), 8 + data.length);
-    return out;
-  };
-
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8; // bit depth
-  header[9] = 2; // truecolour RGB
-
-  const stride = width * 3;
-  const raw = Buffer.alloc((stride + 1) * height);
-  for (let y = 0; y < height; y++) {
-    raw.set(rgb.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
+function encodeJpeg(rgb: Uint8Array, width: number, height: number, quality: number): Buffer {
+  // jpeg-js reads RGBA, so pad each pixel with an opaque alpha byte.
+  const rgba = Buffer.alloc(width * height * 4, 0xff);
+  for (let i = 0, o = 0; i < rgb.length; i += 3, o += 4) {
+    rgba[o] = rgb[i];
+    rgba[o + 1] = rgb[i + 1];
+    rgba[o + 2] = rgb[i + 2];
   }
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", header),
-    chunk("IDAT", deflateSync(raw, { level: 9 })),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
+  return encode({ data: rgba, width, height }, quality).data;
 }
 
 const { values } = parseArgs({
@@ -60,6 +41,7 @@ const { values } = parseArgs({
     "color-input": { type: "string" },
     "color-cols": { type: "string", default: "2048" },
     "color-rows": { type: "string", default: "1024" },
+    "color-quality": { type: "string", default: "90" },
   },
 });
 
@@ -99,9 +81,10 @@ const colorInput = values["color-input"] ?? BODIES[body].colorInput;
 if (colorInput) {
   const colorCols = Number(values["color-cols"]);
   const colorRows = Number(values["color-rows"]);
-  colorFile = `${body}-color-${colorCols}x${colorRows}.png`;
+  const colorQuality = Number(values["color-quality"]);
+  colorFile = `${body}-color-${colorCols}x${colorRows}.jpg`;
   const rgb = sampleColorGrid(colorInput, colorCols, colorRows);
-  writeFileSync(join(values.out, colorFile), encodePng(rgb, colorCols, colorRows));
+  writeFileSync(join(values.out, colorFile), encodeJpeg(rgb, colorCols, colorRows, colorQuality));
   console.log(`Wrote ${colorFile}`);
 }
 writeFileSync(
