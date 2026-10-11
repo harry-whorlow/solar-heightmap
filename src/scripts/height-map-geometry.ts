@@ -10,6 +10,7 @@ export interface HeightMapMeta {
   radiusKm: number;
   minKm: number;
   maxKm: number;
+  colorFile?: string;
 }
 
 export interface HeightMapData {

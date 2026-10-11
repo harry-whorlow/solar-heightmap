@@ -14,6 +14,7 @@ const TAG_COMPRESSION = 259;
 const TAG_STRIP_OFFSETS = 273;
 const TAG_SAMPLES_PER_PIXEL = 277;
 const TAG_ROWS_PER_STRIP = 278;
+const TAG_PLANAR_CONFIGURATION = 284;
 const TAG_SAMPLE_FORMAT = 339;
 
 const TYPE_SIZES: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 16: 8 };
@@ -23,8 +24,10 @@ type PixelFormat = "float32" | "uint16" | "int16";
 interface TiffLayout {
   width: number;
   height: number;
-  format: PixelFormat;
-  bytesPerPixel: number;
+  bitsPerSample: number;
+  sampleFormat: number;
+  samplesPerPixel: number;
+  planar: boolean;
   littleEndian: boolean;
   rowsPerStrip: number;
   stripOffsets: number[];
@@ -92,48 +95,55 @@ function readTiffLayout(fd: number): TiffLayout {
     return v;
   };
 
-  const width = get(TAG_IMAGE_WIDTH);
-  const height = get(TAG_IMAGE_LENGTH);
-  const bits = get(TAG_BITS_PER_SAMPLE);
-  const sampleFormat = get(TAG_SAMPLE_FORMAT, 1);
-
   if (get(TAG_COMPRESSION, 1) !== 1) throw new Error("Compressed TIFFs are not supported");
-  if (get(TAG_SAMPLES_PER_PIXEL, 1) !== 1) throw new Error("Expected a single-band TIFF");
 
   const stripOffsets = tags.get(TAG_STRIP_OFFSETS);
   if (!stripOffsets) throw new Error("Tiled TIFFs are not supported (no StripOffsets)");
 
-  let format: PixelFormat;
-  if (bits === 32 && sampleFormat === 3) format = "float32";
-  else if (bits === 16 && sampleFormat === 1) format = "uint16";
-  else if (bits === 16 && sampleFormat === 2) format = "int16";
-  else throw new Error(`Unsupported pixel format: ${bits}-bit, SampleFormat ${sampleFormat}`);
-
+  const height = get(TAG_IMAGE_LENGTH);
   return {
-    width,
+    width: get(TAG_IMAGE_WIDTH),
     height,
-    format,
-    bytesPerPixel: bits / 8,
+    bitsPerSample: get(TAG_BITS_PER_SAMPLE),
+    sampleFormat: get(TAG_SAMPLE_FORMAT, 1),
+    samplesPerPixel: get(TAG_SAMPLES_PER_PIXEL, 1),
+    planar: get(TAG_PLANAR_CONFIGURATION, 1) === 2,
     littleEndian: le,
     rowsPerStrip: get(TAG_ROWS_PER_STRIP, height),
     stripOffsets,
   };
 }
 
-export function openHeightMap(
-  path: string,
-  { radiusKm = MOON_RADIUS_KM, rowCacheSize = 256 } = {},
-): HeightMapSampler {
+function openTiff(path: string): { fd: number; layout: TiffLayout } {
   const fd = openSync(path, "r");
-  let layout: TiffLayout;
   try {
-    layout = readTiffLayout(fd);
+    return { fd, layout: readTiffLayout(fd) };
   } catch (err) {
     closeSync(fd);
     throw err;
   }
+}
 
-  const { width, height, format, bytesPerPixel, littleEndian, rowsPerStrip, stripOffsets } = layout;
+export function openHeightMap(
+  path: string,
+  { radiusKm = MOON_RADIUS_KM, rowCacheSize = 256 } = {},
+): HeightMapSampler {
+  const { fd, layout } = openTiff(path);
+  const { width, height, bitsPerSample: bits, sampleFormat, littleEndian, rowsPerStrip, stripOffsets } = layout;
+
+  let format: PixelFormat;
+  if (bits === 32 && sampleFormat === 3) format = "float32";
+  else if (bits === 16 && sampleFormat === 1) format = "uint16";
+  else if (bits === 16 && sampleFormat === 2) format = "int16";
+  else {
+    closeSync(fd);
+    throw new Error(`Unsupported pixel format: ${bits}-bit, SampleFormat ${sampleFormat}`);
+  }
+  if (layout.samplesPerPixel !== 1) {
+    closeSync(fd);
+    throw new Error("Expected a single-band TIFF");
+  }
+  const bytesPerPixel = bits / 8;
   const pixelsPerDegree = width / 360;
   const rowBytes = width * bytesPerPixel;
   const rowBuf = Buffer.alloc(rowBytes);
@@ -232,4 +242,71 @@ export function openHeightMap(
       closeSync(fd);
     },
   };
+}
+
+/** Box-filters an 8-bit RGB TIFF down to a `cols`×`rows` RGB image, north row first. */
+export function sampleColorGrid(path: string, cols: number, rows: number): Uint8Array {
+  const { fd, layout } = openTiff(path);
+  const { width, height, samplesPerPixel, planar, rowsPerStrip, stripOffsets } = layout;
+
+  try {
+    if (layout.bitsPerSample !== 8 || samplesPerPixel < 3) {
+      throw new Error("Expected an 8-bit RGB TIFF");
+    }
+
+    const stripsPerPlane = Math.ceil(height / rowsPerStrip);
+    const rowBytes = planar ? width : width * samplesPerPixel;
+    const rowBuf = Buffer.alloc(rowBytes);
+    const readRow = (y: number, plane: number) => {
+      const strip = plane * stripsPerPlane + Math.floor(y / rowsPerStrip);
+      readSync(fd, rowBuf, 0, rowBytes, stripOffsets[strip] + (y % rowsPerStrip) * rowBytes);
+    };
+
+    const colOf = new Uint32Array(width);
+    const colWidth = new Uint32Array(cols);
+    for (let x = 0; x < width; x++) {
+      colOf[x] = Math.floor((x * cols) / width);
+      colWidth[colOf[x]]++;
+    }
+    const rowOf = (y: number) => Math.floor((y * rows) / height);
+
+    const out = new Uint8Array(cols * rows * 3);
+    const sums = new Float64Array(cols * 3);
+    let bucketRows = 0;
+
+    for (let y = 0; y < height; y++) {
+      if (planar) {
+        for (let band = 0; band < 3; band++) {
+          readRow(y, band);
+          for (let x = 0; x < width; x++) sums[colOf[x] * 3 + band] += rowBuf[x];
+        }
+      } else {
+        readRow(y, 0);
+        for (let x = 0; x < width; x++) {
+          const i = x * samplesPerPixel;
+          const o = colOf[x] * 3;
+          sums[o] += rowBuf[i];
+          sums[o + 1] += rowBuf[i + 1];
+          sums[o + 2] += rowBuf[i + 2];
+        }
+      }
+      bucketRows++;
+
+      if (y === height - 1 || rowOf(y + 1) !== rowOf(y)) {
+        const base = rowOf(y) * cols * 3;
+        for (let c = 0; c < cols; c++) {
+          const n = colWidth[c] * bucketRows;
+          for (let band = 0; band < 3; band++) {
+            out[base + c * 3 + band] = Math.round(sums[c * 3 + band] / n);
+          }
+        }
+        sums.fill(0);
+        bucketRows = 0;
+      }
+    }
+
+    return out;
+  } finally {
+    closeSync(fd);
+  }
 }

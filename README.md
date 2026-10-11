@@ -20,6 +20,22 @@ Mars (USGS Astrogeology, MGS MOLA / HRSC):
 curl -L -o data/mars-height-map.tif https://planetarymaps.usgs.gov/mosaic/Mars_MGS_MOLA_DEM_mosaic_global_463m.tif
 ```
 
+The "Material" toggle uses true-colour surface mosaics. The sampler only reads
+uncompressed TIFFs, so download and convert them (`sips` ships with macOS):
+
+```sh
+mkdir -p data/downloads
+
+# Moon (NASA SVS CGI Moon Kit, LRO LROC WAC colour). LZW-compressed, so re-encode.
+curl -o data/downloads/lroc_color_poles_4k.tif https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/lroc_color_poles_4k.tif
+sips -s format jpeg -s formatOptions best data/downloads/lroc_color_poles_4k.tif --out data/downloads/lunar-color.jpg
+sips -s format tiff data/downloads/lunar-color.jpg --out data/lunar-color-mosaic.tif
+
+# Mars (USGS Astrogeology, Viking MDIM 2.1 colourised mosaic, 1 km).
+curl -L -o data/downloads/mars-viking-color-1km.jpg https://astrogeology.usgs.gov/ckan/dataset/7131d503-cdc9-45a5-8f83-5126c0fd397e/resource/5ea881c6-01b3-41fa-a7af-42d2131b54f1/download/mars_viking_mdim21_clrmosaic_1km.jpg
+sips -s format tiff data/downloads/mars-viking-color-1km.jpg --out data/mars-color-mosaic.tif
+```
+
 Then install, sample the height maps, and run:
 
 ```sh
@@ -29,7 +45,8 @@ npm run sample -- --body mars
 npm run dev
 ```
 
-Pass `--cols` and `--rows` to change the grid resolution (default 1024x512).
+Pass `--cols` and `--rows` to change the grid resolution (default 1024x512), and
+`--color-cols` / `--color-rows` for the colour texture (default 2048x1024).
 
 The site lives under the `/solar-heightmap` base path, matching the GitHub
 Pages repo name. The index links to `/solar-heightmap/lunar-heightmap/` and
