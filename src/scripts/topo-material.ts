@@ -9,12 +9,15 @@ export interface TopoMaterialOptions {
   contourIntervalKm?: number;
   heatmap?: boolean;
   surface?: boolean;
+  colorMap?: THREE.Texture | null;
+  material?: boolean;
   fillColor?: THREE.ColorRepresentation;
 }
 
 export interface TopoMaterial extends THREE.MeshStandardMaterial {
   setContourInterval(km: number): void;
   setHeatmap(enabled: boolean): void;
+  setMaterial(enabled: boolean): void;
   setSurface(enabled: boolean): void;
 }
 
@@ -25,6 +28,8 @@ export function createTopoMaterial({
   contourIntervalKm = 1,
   heatmap = true,
   surface = true,
+  colorMap = null,
+  material: showMaterial = false,
   fillColor = "#090b10",
 }: TopoMaterialOptions): TopoMaterial {
   const uniforms = {
@@ -35,6 +40,8 @@ export function createTopoMaterial({
     uRamp: { value: RAMP.map((hex) => new THREE.Color(hex)) },
     uHeatmap: { value: heatmap },
     uSurface: { value: surface },
+    uColorMap: { value: colorMap },
+    uMaterial: { value: showMaterial },
     uFillColor: { value: new THREE.Color(fillColor) },
   };
 
@@ -42,6 +49,7 @@ export function createTopoMaterial({
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
+    if (colorMap) shader.defines = { ...shader.defines, HAS_COLOR_MAP: "" };
 
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec2 gridUv;\nvarying vec2 vGridUv;")
@@ -59,6 +67,8 @@ export function createTopoMaterial({
         uniform vec3 uRamp[RAMP_SIZE];
         uniform bool uHeatmap;
         uniform bool uSurface;
+        uniform sampler2D uColorMap;
+        uniform bool uMaterial;
         uniform vec3 uFillColor;
         varying vec2 vGridUv;
 
@@ -116,8 +126,25 @@ export function createTopoMaterial({
         /* glsl */ `#include <color_fragment>
         float vHeight = smoothHeight(vGridUv);
         float heightT = clamp((vHeight - uMinKm) / (uMaxKm - uMinKm), 0.0, 1.0);
-        vec3 baseColor = uHeatmap ? ramp(heightT) : vec3(1.0);
-        vec3 minorColor = uHeatmap ? baseColor : vec3(mix(0.15, 1.0, heightT));
+        vec3 baseColor = vec3(1.0);
+        vec3 minorColor = vec3(mix(0.15, 1.0, heightT));
+        vec3 majorColor = baseColor;
+        #ifdef HAS_COLOR_MAP
+        if (uMaterial) {
+          // Hue from the true-colour mosaic, lightness from height (as on the grey ramp).
+          vec3 surfaceColor = texture(uColorMap, vGridUv).rgb;
+          float luma = dot(surfaceColor, vec3(0.2126, 0.7152, 0.0722));
+          vec3 tint = max(mix(vec3(1.0), surfaceColor / max(luma, 1e-3), 1.5), 0.0);
+          baseColor = surfaceColor;
+          minorColor = min(tint * mix(0.15, 1.0, heightT), 1.0);
+          majorColor = minorColor;
+        }
+        #endif
+        if (uHeatmap) {
+          baseColor = ramp(heightT);
+          minorColor = baseColor;
+          majorColor = baseColor;
+        }
         float minorShade = uHeatmap ? 0.35 : mix(0.6, 0.1, heightT);
         float minorLine = 0.0;
         float majorLine = 0.0;
@@ -131,7 +158,7 @@ export function createTopoMaterial({
         "#include <opaque_fragment>",
         /* glsl */ `if (!uSurface) {
           outgoingLight = mix(uFillColor, minorColor, minorLine * 0.6);
-          outgoingLight = mix(outgoingLight, baseColor, majorLine);
+          outgoingLight = mix(outgoingLight, majorColor, majorLine);
         }
         #include <opaque_fragment>`,
       );
@@ -143,6 +170,10 @@ export function createTopoMaterial({
 
   material.setHeatmap = (enabled) => {
     uniforms.uHeatmap.value = enabled;
+  };
+
+  material.setMaterial = (enabled) => {
+    uniforms.uMaterial.value = enabled;
   };
 
   material.setSurface = (enabled) => {

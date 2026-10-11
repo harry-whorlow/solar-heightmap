@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import type { SceneState } from "../scripts/scene-state";
 
 interface Props {
   body: "moon" | "mars";
@@ -10,6 +11,8 @@ interface Props {
   distance: { min: number; max: number; step: number; value: number };
   exaggeration?: number;
   contour?: string;
+  /** Starting camera and planet pose, as copied with the "Copy scene" button. */
+  scene?: SceneState;
 }
 
 const {
@@ -21,6 +24,7 @@ const {
   distance,
   exaggeration = 4,
   contour = "0.25",
+  scene,
 } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const contours = [
@@ -49,7 +53,13 @@ const contours = [
       </header>
 
       <section class="hero" aria-label={label}>
-        <canvas id="planet-canvas" data-body={body} data-radius-km={radiusKm}></canvas>
+        <canvas
+          id="planet-canvas"
+          data-body={body}
+          data-radius-km={radiusKm}
+          data-scene={scene && JSON.stringify(scene)}
+        ></canvas>
+        <button id="copy-scene" class="copy-scene" type="button">Copy scene</button>
         <div class="controls">
           <label class="control">
             <span>Height exaggeration</span>
@@ -82,6 +92,10 @@ const contours = [
           <label class="control">
             <input id="heatmap" type="checkbox" checked />
             <span>Heat map</span>
+          </label>
+          <label class="control">
+            <input id="material" type="checkbox" />
+            <span>Material</span>
           </label>
           <label class="control">
             <input id="surface" type="checkbox"  />

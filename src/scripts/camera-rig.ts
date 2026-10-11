@@ -13,6 +13,7 @@ export interface CameraRigOptions {
 export interface CameraRig {
   setFree(free: boolean): void;
   setDistance(distance: number): void;
+  setPose(position: THREE.Vector3, quaternion: THREE.Quaternion): void;
   update(dt: number): void;
 }
 
@@ -77,6 +78,11 @@ export function createCameraRig(
       const d = THREE.MathUtils.clamp(distance, minRadius, maxRadius);
       setHome(d);
       if (free) camera.position.setLength(d);
+    },
+
+    setPose(position, quaternion) {
+      camera.position.copy(position);
+      camera.quaternion.copy(quaternion);
     },
 
     update(dt) {

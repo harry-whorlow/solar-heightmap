@@ -81,6 +81,25 @@ body {
   accent-color: #f1f0eb;
 }
 
+.copy-scene {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font: 12px var(--mono);
+  color: #f1f0eb;
+  background: #161922;
+  border: 1px solid #2a2e3a;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 150ms;
+}
+
+.copy-scene:hover,
+.copy-scene:focus-visible {
+  border-color: #858893;
+}
+
 #distance-value {
   min-width: 8ch;
 }

@@ -31,6 +31,19 @@ export async function loadHeightMap(
   return { meta, heights };
 }
 
+export async function loadColorMap(
+  file: string,
+  baseUrl = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/data`,
+): Promise<THREE.Texture> {
+  const texture = await new THREE.TextureLoader().loadAsync(`${baseUrl}/${file}`);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // Row 0 is the north pole, matching gridUv.y = 0.
+  texture.flipY = false;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 export class HeightMapGeometry extends THREE.BufferGeometry {
   readonly cols: number;
   readonly rows: number;
